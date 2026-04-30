@@ -7,6 +7,34 @@ loaded OpenType font (TTF / OTF), and emits an extruded triangle mesh ready
 for any renderer. There is no graphics-API dependency: the library returns
 flat vertex / index buffers, you upload them however you like.
 
+## Gallery
+
+| | |
+|:---:|:---:|
+| ![E = mc²](docs/samples/mass_energy.png) | ![Euler's identity](docs/samples/euler.png) |
+| ![Derivative of sine](docs/samples/derivative.png) | ![Sum of squared reciprocals](docs/samples/sum_squares.png) |
+| ![Gaussian integral](docs/samples/gauss.png) | ![Accents](docs/samples/accents.png) |
+
+> Each tile above is a `MeshData` returned by `generateLatexMesh`, software-
+> rasterized with a tiny built-in renderer ([samples/render_samples.cpp](samples/render_samples.cpp)).
+> A real consumer would upload the same vertices/indices to its own GPU
+> renderer. To regenerate after a code change:
+>
+> ```sh
+> cmake -S . -B build \
+>     -DLATEX3D_BUILD_SAMPLES=ON \
+>     -DLATEX3D_SAMPLES_FONT=/path/to/math.otf
+> cmake --build build --target latex3d_samples
+> ```
+>
+> Any OpenType font with a MATH table works — Fira Math, STIX Two Math,
+> Latin Modern Math. Sources are listed in
+> [samples/CMakeLists.txt](samples/CMakeLists.txt). The `latex3d_samples`
+> target only appears when `LATEX3D_SAMPLES_FONT` is set, so the configure
+> step won't fail on a fresh clone.
+
+## Features
+
 It supports a useful subset of math-mode LaTeX:
 
 - Greek letters: `\alpha`–`\Omega`

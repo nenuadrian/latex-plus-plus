@@ -17,7 +17,8 @@ project(latex3d VERSION 0.1.0 LANGUAGES CXX
         DESCRIPTION "OpenType font + LaTeX -> 3D extruded mesh"
         HOMEPAGE_URL "")
 
-option(LATEX3D_BUILD_TESTS "Build latex3d unit tests" ON)
+option(LATEX3D_BUILD_TESTS   "Build latex3d unit tests"          ON)
+option(LATEX3D_BUILD_SAMPLES "Build the README gallery PNG renderer" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -125,6 +126,15 @@ target_compile_features(latex3d PUBLIC cxx_std_17)
 if(LATEX3D_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# ── Samples ──────────────────────────────────────────────────────────────────
+# Off by default — opt in with -DLATEX3D_BUILD_SAMPLES=ON when you want to
+# regenerate the gallery PNGs in docs/samples/. Pulls in stb_image_write
+# (header-only PNG writer) and either a fetched FiraMath OTF or one you
+# point at via -DLATEX3D_SAMPLES_FONT=...
+if(LATEX3D_BUILD_SAMPLES)
+    add_subdirectory(samples)
 endif()
 
 # ── Install rules (standalone-only) ──────────────────────────────────────────

@@ -312,6 +312,12 @@ namespace latex3d
             float minX = 1e9f, maxX = -1e9f;
             float minY = 1e9f, maxY = -1e9f;
 
+            // When the previous emit was a "big operator" (Σ Π ⋃ ⋂ ⨁ …),
+            // a following ^/_ uses displaystyle limit placement (centered
+            // above/below the op) rather than text-style scripts. -1 means
+            // the previous emit wasn't a big op.
+            int lastBigOpIdx = -1;
+
             Layouter(const std::string &s, const FontMetrics &m, float w)
                 : src(s), metrics(m), weight(w) {}
 
@@ -320,13 +326,33 @@ namespace latex3d
                 return std::isalpha(static_cast<unsigned char>(c)) != 0;
             }
 
+            // The N-ary operator block of Unicode where displaystyle limits
+            // are conventional. \int (0x222B-0x222F) and \oint (0x222E) are
+            // intentionally excluded — TeX defaults to inline scripts on
+            // integrals even in display mode.
+            static bool isBigOperator(uint32_t cp)
+            {
+                return cp == 0x2211   // ∑
+                    || cp == 0x220F   // ∏
+                    || cp == 0x2210   // ∐
+                    || cp == 0x22C0   // ⋀
+                    || cp == 0x22C1   // ⋁
+                    || cp == 0x22C2   // ⋂
+                    || cp == 0x22C3   // ⋃
+                    || (cp >= 0x2A00 && cp <= 0x2A09); // ⨀..⨉
+            }
+
             void emitGlyph(uint32_t cp)
             {
                 const float advNative = metrics.advanceEm(cp);
                 // Missing glyphs (advance==0) are dropped entirely — matches
                 // the original behavior where text3DGetGlyph returning false
                 // skipped both geometry and advance.
-                if (advNative <= 0.f) return;
+                if (advNative <= 0.f)
+                {
+                    lastBigOpIdx = -1;
+                    return;
+                }
 
                 LayoutOp op;
                 op.type = LayoutOp::Glyph;
@@ -344,6 +370,10 @@ namespace latex3d
                 maxX = std::max(maxX, penX + adv);
                 minY = std::min(minY, penY + desc);
                 maxY = std::max(maxY, penY + asc);
+
+                lastBigOpIdx = isBigOperator(cp)
+                    ? static_cast<int>(ops.size()) - 1 : -1;
+
                 // Tracking: 10% extra inter-glyph advance over the font's
                 // native advance for a slightly looser look.
                 penX += adv * 1.10f;
@@ -413,6 +443,7 @@ namespace latex3d
 
             void handleFrac()
             {
+                lastBigOpIdx = -1;
                 std::string num = readGroup();
                 std::string den = readGroup();
 
@@ -515,6 +546,7 @@ namespace latex3d
             // keeps only the vertical contribution (don't advance the pen).
             void handlePhantom(bool horiz, bool vert)
             {
+                lastBigOpIdx = -1;
                 if (i >= src.size() || src[i] != '{') return;
                 std::string inner = readGroup();
                 if (inner.empty()) return;
@@ -545,6 +577,7 @@ namespace latex3d
             // the fraction bar so the geometry pass needs no changes.
             void handleOverUnderLine(bool over)
             {
+                lastBigOpIdx = -1;
                 if (i >= src.size() || src[i] != '{') return;
                 std::string inner = readGroup();
                 if (inner.empty()) return;
@@ -602,6 +635,7 @@ namespace latex3d
             // as the fraction so binom and frac stay visually consistent.
             void handleBinom()
             {
+                lastBigOpIdx = -1;
                 std::string num = readGroup();
                 std::string den = readGroup();
 
@@ -679,6 +713,7 @@ namespace latex3d
             // coords, then shift into place.
             void handleOverUnderset(bool above)
             {
+                lastBigOpIdx = -1;
                 std::string upper = readGroup();
                 std::string lower = readGroup();
 
@@ -759,6 +794,7 @@ namespace latex3d
             // would put it.
             void handleBrace(bool downward)
             {
+                lastBigOpIdx = -1;
                 if (i >= src.size() || src[i] != '{') return;
                 std::string inner = readGroup();
                 if (inner.empty()) return;
@@ -909,6 +945,7 @@ namespace latex3d
             // looks correct for typical 1–3 char arguments.
             void handleAccent(uint32_t accentCp, bool wide)
             {
+                lastBigOpIdx = -1;
                 if (i >= src.size() || src[i] != '{')
                 {
                     // \hat with no argument — fall back to a bare accent.
@@ -1186,11 +1223,67 @@ namespace latex3d
                         }
                         else if (name == "sqrt")
                         {
+                            // Radical hook (√) on the left, then the inner
+                            // expression, then a horizontal overline that
+                            // extends from the hook's right edge across the
+                            // inner content's full width — same machinery as
+                            // \overline. Without the overline the radical
+                            // looks like a stray hook hanging beside the
+                            // radicand.
                             emitGlyph(0x221A);
                             if (i < src.size() && src[i] == '{')
                             {
                                 std::string inner = readGroup();
-                                if (!inner.empty()) layoutSubstring(inner);
+                                if (!inner.empty())
+                                {
+                                    const float startX = penX;
+                                    Layouter sub(inner, metrics, weight);
+                                    sub.penX = penX;
+                                    sub.penY = penY;
+                                    sub.scale = scale;
+                                    sub.run();
+                                    for (auto &op : sub.ops) ops.push_back(op);
+
+                                    // Place the overline so it visually
+                                    // continues the radical hook. The √
+                                    // glyph's hook ends near the ascender,
+                                    // so for short content (π, x, n) the
+                                    // rule sits right at ascender height
+                                    // and the hook meets the rule's bottom
+                                    // edge. For taller content (a^b, fr-
+                                    // actions) the rule floats just above
+                                    // sub.maxY with a minimal breathing
+                                    // gap. Unlike \overline we don't add
+                                    // gap + extraAscender on top of that
+                                    // — those constants are tuned for the
+                                    // overline accent's optical lift, not
+                                    // for the radical bar.
+                                    const float halfTh = 0.5f *
+                                        metrics.overbarRuleThicknessEm() * scale;
+                                    const float y =
+                                        std::max(sub.maxY + 0.02f * scale,
+                                                 penY + metrics.ascenderEm() * scale);
+
+                                    LayoutOp bar;
+                                    bar.type = LayoutOp::Rule;
+                                    bar.x0 = startX;
+                                    bar.x1 = sub.penX;
+                                    bar.y0 = y - halfTh;
+                                    bar.y1 = y + halfTh;
+                                    ops.push_back(bar);
+
+                                    if (sub.maxX > sub.minX)
+                                    {
+                                        minX = std::min(minX, sub.minX);
+                                        maxX = std::max(maxX,
+                                                        std::max(sub.maxX, bar.x1));
+                                        minY = std::min(minY,
+                                                        std::min(sub.minY, y - halfTh));
+                                        maxY = std::max(maxY,
+                                                        std::max(sub.maxY, y + halfTh));
+                                    }
+                                    penX = sub.penX;
+                                }
                             }
                         }
                         else
@@ -1213,7 +1306,92 @@ namespace latex3d
                         bool sup = (c == '^');
                         ++i;
                         std::string atom = readAtom();
-                        if (!atom.empty())
+                        if (atom.empty()) { /* nothing to lay out */ }
+                        else if (lastBigOpIdx >= 0
+                                 && lastBigOpIdx < (int)ops.size())
+                        {
+                            // Display-style limit: place the script ABOVE
+                            // (^) or BELOW (_) the big operator, centered
+                            // on its horizontal midpoint. Keep the big-op
+                            // index live so a paired ^…_… pair both pick
+                            // up displaystyle limits — clear it only after
+                            // we've consumed the second of the pair (no
+                            // attempt is made to peek at the next token,
+                            // so two adjacent scripts after one big op
+                            // both work but a third would chain too; in
+                            // practice TeX inputs only ever stack two).
+                            const LayoutOp &bigOp = ops[lastBigOpIdx];
+                            const float opAdv = metrics.advanceEm(bigOp.codepoint)
+                                                * bigOp.scale;
+                            const float opCenterX = bigOp.x + 0.5f * opAdv;
+                            const float opTop = bigOp.y
+                                              + metrics.ascenderEm() * bigOp.scale;
+                            const float opBottom = bigOp.y
+                                                 + metrics.descenderEm() * bigOp.scale;
+
+                            const float subScale =
+                                scale * metrics.scriptPercentScaleDown();
+                            Layouter sub(atom, metrics, weight);
+                            sub.scale = subScale;
+                            sub.run();
+
+                            const float subW = std::max(0.f, sub.maxX - sub.minX);
+                            const float subH = std::max(0.f, sub.maxY - sub.minY);
+                            // Small breathing gap between the operator and
+                            // the limit (em-fractions, scaled by the limit's
+                            // own size so they shrink together).
+                            const float gap = 0.05f * subScale;
+
+                            // Translate sub.ops so they land centered above
+                            // (or below) the big operator.
+                            float dx = opCenterX
+                                       - 0.5f * (sub.minX + sub.maxX);
+                            float dy = sup
+                                ? (opTop + gap) - sub.minY
+                                : (opBottom - gap) - sub.maxY;
+
+                            for (auto op : sub.ops)
+                            {
+                                if (op.type == LayoutOp::Glyph)
+                                { op.x += dx; op.y += dy; }
+                                else
+                                {
+                                    op.x0 += dx; op.x1 += dx;
+                                    op.y0 += dy; op.y1 += dy;
+                                    if (!op.polygon.empty())
+                                        for (auto &p : op.polygon)
+                                        { p[0] += dx; p[1] += dy; }
+                                }
+                                ops.push_back(op);
+                            }
+
+                            // Pen advances if the limit's width exceeds the
+                            // operator's so the next token clears the
+                            // wider stack.
+                            const float prevAdv = opAdv * 1.10f;
+                            const float overhang =
+                                std::max(0.f,
+                                         (sub.minX + dx) - bigOp.x);
+                            const float rightOver =
+                                std::max(0.f,
+                                         (sub.maxX + dx)
+                                         - (bigOp.x + prevAdv));
+                            if (rightOver > 0.f) penX += rightOver;
+                            (void)overhang; (void)subW; (void)subH;
+
+                            // Update bbox tracking.
+                            if (sub.maxX > sub.minX)
+                            {
+                                minX = std::min(minX, sub.minX + dx);
+                                maxX = std::max(maxX, sub.maxX + dx);
+                                minY = std::min(minY, sub.minY + dy);
+                                maxY = std::max(maxY, sub.maxY + dy);
+                            }
+                            // Big-op stays "live" for the paired script
+                            // (handles \sum_{…}^{…} and \sum^{…}_{…}); a
+                            // following non-script glyph emit will reset it.
+                        }
+                        else
                         {
                             float savedScale = scale;
                             float savedPenY = penY;
@@ -1224,6 +1402,7 @@ namespace latex3d
                             layoutSubstring(atom);
                             scale = savedScale;
                             penY = savedPenY;
+                            lastBigOpIdx = -1;
                         }
                     }
                     else if (c == '{')

@@ -1,6 +1,6 @@
-# Latex++ - 
+# LaTeX++ - 
 
-Latex++ parses a LaTeX math expression, looks up each glyph's outline in a
+LaTeX++ parses a LaTeX math expression, looks up each glyph's outline in a
 loaded OpenType font (TTF / OTF), and emits an extruded triangle mesh ready
 for any renderer. There is no graphics-API dependency: the library returns
 flat vertex / index buffers, you upload them however you like.

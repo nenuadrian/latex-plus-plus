@@ -1,0 +1,24 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+# Public dep — referenced by latex3d/text3d.h (Text3DOptions::color is
+# glm::vec3). Consumers must have glm available at compile time.
+find_dependency(glm)
+# Private deps — internal implementation only. Listed here so that linking
+# against the imported latex3d static library still pulls them in via the
+# Config file, since the install export uses BUILD_INTERFACE-scoped links
+# that don't survive into the installed target.
+find_dependency(Freetype)
+
+include("${CMAKE_CURRENT_LIST_DIR}/latex3dTargets.cmake")
+
+# Re-attach the implementation deps to the imported target so consumers
+# can just link `latex3d::latex3d` and pick up the transitive symbols.
+if(TARGET latex3d::latex3d)
+    target_link_libraries(latex3d::latex3d INTERFACE
+        Freetype::Freetype
+        $<$<TARGET_EXISTS:glm::glm>:glm::glm>
+        $<$<TARGET_EXISTS:glm>:glm>)
+endif()
+
+check_required_components(latex3d)

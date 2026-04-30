@@ -1,8 +1,6 @@
-# latex3d
+# Latex++ - 
 
-OpenType font + LaTeX → 3D extruded mesh, in C++17.
-
-`latex3d` parses a LaTeX math expression, looks up each glyph's outline in a
+Latex++ parses a LaTeX math expression, looks up each glyph's outline in a
 loaded OpenType font (TTF / OTF), and emits an extruded triangle mesh ready
 for any renderer. There is no graphics-API dependency: the library returns
 flat vertex / index buffers, you upload them however you like.
